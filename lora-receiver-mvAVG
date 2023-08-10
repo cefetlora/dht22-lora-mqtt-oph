@@ -1,0 +1,153 @@
+#include "heltec.h"
+#include <WiFi.h>
+#include <PubSubClient.h>
+
+#define mqtt_server "broker.mqtt-dashboard.com"
+#define mqtt_port 1883
+#define NET_SSID "aaaa"
+#define NET_PASSWORD "12345678"
+#define mqtt_topic_temp "cefet-temperature"
+#define mqtt_topic_temp_avg "cefet-temperature-avg"
+#define mqtt_topic_humid "cefet-humidity"
+#define mqtt_topic_humid_avg "cefet-humidity-avg"
+#define BAND 915E6
+
+String rssi = "RSSI --";
+String packSize = "--";
+String packet;
+bool wifiConnected = false;
+
+WiFiClient espClient;
+PubSubClient MQTT(espClient);
+String mqttClientID;
+
+// Variáveis declaradas globalmente
+String temperature;
+String humidity;
+String avgTemperature;
+String avgHumidity;
+
+// Variáveis para armazenar os valores anteriores
+String prevTemperature = "";
+String prevHumidity = "";
+String prevAvgTemperature = "";
+String prevAvgHumidity = "";
+
+void LoRaData() {
+  Heltec.display->setTextAlignment(TEXT_ALIGN_LEFT);
+  Heltec.display->setFont(ArialMT_Plain_10);
+  Heltec.display->drawString(0 , 15 , "Received " + packSize + " bytes");
+  Heltec.display->drawStringMaxWidth(0 , 26 , 128, packet);
+  Heltec.display->drawString(0, 0, rssi);
+  Heltec.display->display();
+  Heltec.display->clear();
+}
+
+void cbk(int packetSize) {
+  packet = "";
+  packSize = String(packetSize, DEC);
+  for (int i = 0; i < packetSize; i++) {
+    packet += (char)LoRa.read();
+  }
+  LoRaData();
+
+  // Divide as informações recebidas
+  int separatorIndex1 = packet.indexOf(",");
+  temperature = packet.substring(0, separatorIndex1);
+  int separatorIndex2 = packet.indexOf(",", separatorIndex1 + 1);
+  humidity = packet.substring(separatorIndex1 + 1, separatorIndex2);
+  int separatorIndex3 = packet.indexOf(",", separatorIndex2 + 1);
+  avgTemperature = packet.substring(separatorIndex2 + 1, separatorIndex3);
+  avgHumidity = packet.substring(separatorIndex3 + 1);
+  
+  // Envia as informações recebidas via LoRa para o Broker MQTT
+  if (wifiConnected) {
+    MQTT.publish(mqtt_topic_temp, temperature.c_str());
+    MQTT.publish(mqtt_topic_humid, humidity.c_str());
+    MQTT.publish(mqtt_topic_temp_avg, avgTemperature.c_str());
+    MQTT.publish(mqtt_topic_humid_avg, avgHumidity.c_str());
+    
+    Serial.println("Data received via LoRa: Temperature: " + temperature + " Humidity: " + humidity + " Average Temperature: " + avgTemperature + " Average Humidity: " + avgHumidity);
+    Serial.println("Data sent to MQTT broker.");
+  }
+  
+}
+
+void setup_wifi() {
+  delay(10);
+  Serial.print("Connecting to ");
+  Serial.println(NET_SSID);
+  WiFi.begin(NET_SSID, NET_PASSWORD);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void setup() {
+  // WIFI Kit series V1 not support Vext control
+  Heltec.begin(true /*DisplayEnable Enable*/, true /*Heltec.LoRa Disable*/, true /*Serial Enable*/, true /*PABOOST Enable*/, BAND /*long BAND*/);
+
+  setup_wifi();
+
+  Heltec.display->init();
+  Heltec.display->flipScreenVertically();
+  Heltec.display->setFont(ArialMT_Plain_10);
+  delay(1500);
+  Heltec.display->clear();
+
+  Heltec.display->drawString(0, 0, "Heltec.LoRa Initial success!");
+  Heltec.display->drawString(0, 10, "Wait for incoming data...");
+  Heltec.display->display();
+  delay(1000);
+  LoRa.receive();
+  Heltec.display->clear();
+
+  // Configura a conexão com o Broker MQTT
+  MQTT.setServer(mqtt_server, mqtt_port);
+  MQTT.setCallback([](char* topic, byte* payload, unsigned int length) {
+    // Aqui você pode adicionar código para tratar as mensagens recebidas do Broker
+    mqttClientID = "juancrvg";
+  });
+}
+
+void reconnect() {
+  // Loop até se conectar ao broker MQTT
+  while (!MQTT.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Cria um ID de cliente aleatório
+    String clientId = "juancrvg";
+    clientId += String(random(0xffff), HEX);
+    // Tenta conectar
+    if (MQTT.connect(clientId.c_str())) {
+      Serial.println("connected");
+      // Inscreva-se nos tópicos necessários
+      MQTT.subscribe(mqtt_topic_temp);
+      MQTT.subscribe(mqtt_topic_humid);
+      wifiConnected = true;
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(MQTT.state());
+      Serial.println(" try again in 5 seconds");
+      delay(5000);
+    }
+  }
+}
+
+void loop() {
+  int packetSize = LoRa.parsePacket();
+  if (packetSize) {
+    cbk(packetSize);
+  }
+  delay(10);
+
+  if (!MQTT.connected()) {
+    reconnect();
+  }
+  MQTT.loop();
+}
