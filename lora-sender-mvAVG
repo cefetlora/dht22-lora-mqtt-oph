@@ -1,0 +1,119 @@
+#include "heltec.h"
+#include "DHTesp.h"
+#include <cppQueue.h>
+
+#define BAND    915E6  //Escolha a frequência
+#define AVG_SIZE 10 // Define o tamanho da média móvel
+
+DHTesp dht;
+cppQueue tempQueue = cppQueue(sizeof(float), AVG_SIZE, FIFO); // Cria fila para temperatura
+cppQueue humidityQueue = cppQueue(sizeof(float), AVG_SIZE, FIFO); // Cria fila para umidade
+
+float lastTemp;
+float lastHumidity;
+float avgTemp;
+float avgHumidity;
+
+/* Protótipo da função */
+void getSensorData();
+void sendPacket();
+void calculateAverage(cppQueue &queue, float &average);
+
+void getSensorData()
+{
+  float temperature = dht.getTemperature();
+  float humidity = dht.getHumidity();
+
+  float discard; // Valor a ser descartado
+
+  // Adiciona novos valores nas filas e remove os mais antigos, se necessário
+  if (tempQueue.isFull()) tempQueue.pop(&discard);
+  tempQueue.push(&temperature);
+  if (humidityQueue.isFull()) humidityQueue.pop(&discard);
+  humidityQueue.push(&humidity);
+
+  lastTemp = temperature;
+  lastHumidity = humidity;
+
+  // Calcula a média apenas se houver pelo menos AVG_SIZE leituras
+  if (tempQueue.getCount() == AVG_SIZE && humidityQueue.getCount() == AVG_SIZE) {
+    calculateAverage(tempQueue, avgTemp);
+    calculateAverage(humidityQueue, avgHumidity);
+  }
+
+  digitalWrite(LED, HIGH);
+  delay(500);
+  digitalWrite(LED, LOW);
+  delay(500);
+  
+  delay(1000);
+}
+
+void calculateAverage(cppQueue &queue, float &average)
+{
+  float sum = 0;
+  for (int i = 0; i < queue.getCount(); i++) {
+    float value;
+    queue.peekIdx(&value, i);
+    sum += value;
+  }
+  average = sum / queue.getCount();
+}
+
+void sendPacket()
+{
+  LoRa.beginPacket();
+  LoRa.print(lastTemp);         // temperatura
+  LoRa.print(",");
+  LoRa.print(lastHumidity);     // umidade
+  LoRa.print(",");
+  LoRa.print(avgTemp);          // temperatura média
+  LoRa.print(",");
+  LoRa.print(avgHumidity);      // umidade média
+  LoRa.endPacket();
+}
+
+void setup()
+{
+  pinMode(LED,OUTPUT);
+
+  Heltec.begin(true, true, true, true, BAND);
+ 
+  Heltec.display->init();
+  Heltec.display->flipScreenVertically();  
+  Heltec.display->setFont(ArialMT_Plain_10);
+  Heltec.display->clear();
+  Heltec.display->drawString(33, 5, "Iniciado");
+  Heltec.display->drawString(10, 30, "com Sucesso!");
+  Heltec.display->display();
+  delay(1000);
+  
+  dht.setup(13, DHTesp::DHT22);
+   
+  lastTemp = dht.getTemperature();
+  lastHumidity = dht.getHumidity();
+  avgTemp = lastTemp;
+  avgHumidity = lastHumidity;
+}
+
+void loop()
+{
+  getSensorData(); //Ler umidade e temperatura
+
+  // Envia os dados apenas se houver pelo menos AVG_SIZE leituras
+  if (tempQueue.getCount() == AVG_SIZE && humidityQueue.getCount() == AVG_SIZE) {
+    Heltec.display->clear();
+    Heltec.display->setTextAlignment(TEXT_ALIGN_LEFT);
+    Heltec.display->setFont(ArialMT_Plain_10);
+    
+    Heltec.display->drawString(0, 0, "Enviando");
+    Heltec.display->drawString(0, 10, "Temperatura: " + String(lastTemp) + "°C");
+    Heltec.display->drawString(0, 20, "Umidade: " + String(lastHumidity) + "%");
+    Heltec.display->drawString(0, 30, "Média Temp: " + String(avgTemp) + "°C");
+    Heltec.display->drawString(0, 40, "Média Umidade: " + String(avgHumidity) + "%");
+    Heltec.display->display();
+
+    sendPacket();
+  }
+}
+
