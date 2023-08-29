@@ -1,0 +1,11 @@
+// Triggers:
+// - When Numero_Umidade was updated
+
+// context: umidade-1
+val humidityValue = (Numero_Umidade.state as Number).doubleValue()
+if (humidityValue > 80) {
+    sendBroadcastNotification("Alerta! Umidade atual é de " + humidityValue + "% e ultrapassou o limite de 80%!")
+}
+if (humidityValue < 40) {
+    sendBroadcastNotification("Atenção! Umidade atual é de " + humidityValue + "% e está abaixo do limite de 40%!")
+}
