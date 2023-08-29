@@ -1,0 +1,11 @@
+// Triggers:
+// - When Numero_Temperatura was updated
+
+// context: temperatura-1
+val tempValue = (Numero_Temperatura.state as Number).doubleValue()
+if (tempValue > 35) {
+    sendBroadcastNotification("Alerta! Temperatura atual é de " + tempValue + "°C e ultrapassou o limite de 35°C!")
+}
+if (tempValue < 20) {
+    sendBroadcastNotification("Atenção! Temperatura atual é de " + tempValue + "°C e está abaixo do limite de 20°C!")
+}
